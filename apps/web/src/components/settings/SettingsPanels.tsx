@@ -1,4 +1,12 @@
-import { ArchiveIcon, ArchiveX, ChevronRightIcon, LoaderIcon, SettingsIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveX,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  LoaderIcon,
+  SearchIcon,
+  SettingsIcon,
+} from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -83,7 +91,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { isMacPlatform } from "../../lib/utils";
+import { cn, isMacPlatform } from "../../lib/utils";
 import {
   primaryServerConfigAtom,
   primaryServerObservabilityAtom,
@@ -2905,8 +2913,17 @@ export function GeneralSettingsPanel() {
   );
 }
 
+const ARCHIVED_GROUP_OPEN_STATE_KEY = "t3code:archived_group_open_state";
+const ArchivedGroupOpenStateSchema = Schema.Record(Schema.String, Schema.Boolean);
+
 export function ArchivedThreadsPanel() {
   const projects = useProjects();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [groupOpenState, setGroupOpenState] = useLocalStorage(
+    ARCHIVED_GROUP_OPEN_STATE_KEY,
+    {},
+    ArchivedGroupOpenStateSchema,
+  );
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
   const environmentIds = useMemo(
     () => [...new Set(projects.map((project) => project.environmentId))],
@@ -2970,6 +2987,19 @@ export function ArchivedThreadsPanel() {
     }
     return groups;
   }, [archivedSnapshots]);
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const visibleGroups = useMemo(() => {
+    if (!normalizedQuery) return archivedGroups;
+    return archivedGroups
+      .map((group) => ({
+        ...group,
+        threads: group.threads.filter((thread) =>
+          thread.title.toLowerCase().includes(normalizedQuery),
+        ),
+      }))
+      .filter((group) => group.threads.length > 0);
+  }, [archivedGroups, normalizedQuery]);
 
   const handleArchivedThreadContextMenu = useCallback(
     async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
@@ -3049,94 +3079,156 @@ export function ArchivedThreadsPanel() {
           />
         </SettingsSection>
       ) : (
-        archivedGroups.map(({ project, threads: projectThreads }, index) => (
-          <SettingsSection
-            key={project.id}
-            id={index === 0 ? searchableSetting("archive").id : undefined}
-            title={project.name}
-            icon={
-              <ProjectFavicon
-                environmentId={project.environmentId}
-                cwd={project.cwd}
-                projectName={project.name}
-                faviconPath={project.faviconPath}
-                projectIcon={project.projectIcon}
-              />
-            }
-          >
-            {projectThreads.map((thread) => (
+        <>
+          <div className="relative">
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search archived threads"
+              aria-label="Search archived threads"
+              className="pl-9"
+            />
+          </div>
+          {visibleGroups.length === 0 ? (
+            <SettingsSection title={searchableSetting("archive").title}>
               <SettingsRow
-                key={thread.id}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  void (async () => {
-                    const result = await settlePromise(() =>
-                      handleArchivedThreadContextMenu(
-                        scopeThreadRef(thread.environmentId, thread.id),
-                        {
-                          x: event.clientX,
-                          y: event.clientY,
-                        },
-                      ),
-                    );
-                    if (result._tag === "Failure") {
-                      const error = squashAtomCommandFailure(result);
-                      toastManager.add(
-                        stackedThreadToast({
-                          type: "error",
-                          title: "Archived thread action failed",
-                          description:
-                            error instanceof Error ? error.message : "An error occurred.",
-                        }),
-                      );
-                    }
-                  })();
-                }}
-                title={thread.title}
-                description={
-                  <>
-                    Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
-                    {" \u00b7 Created "}
-                    {formatRelativeTimeLabel(thread.createdAt)}
-                  </>
+                title={
+                  <span className="inline-flex items-center gap-2">
+                    <ArchiveIcon className="size-3.5 text-muted-foreground" />
+                    No matching threads
+                  </span>
                 }
-                control={
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    className="shrink-0"
-                    onClick={() => {
-                      void (async () => {
-                        const result = await unarchiveThread(
-                          scopeThreadRef(thread.environmentId, thread.id),
-                        );
-                        if (result._tag === "Success") {
-                          refreshArchivedThreads();
-                          return;
-                        }
-                        if (!isAtomCommandInterrupted(result)) {
-                          const error = squashAtomCommandFailure(result);
-                          toastManager.add(
-                            stackedThreadToast({
-                              type: "error",
-                              title: "Failed to unarchive thread",
-                              description:
-                                error instanceof Error ? error.message : "An error occurred.",
-                            }),
-                          );
-                        }
-                      })();
-                    }}
-                  >
-                    <ArchiveX className="size-3.5" />
-                    <span>Unarchive</span>
-                  </Button>
-                }
+                description={`No archived threads match "${searchQuery.trim()}".`}
               />
-            ))}
-          </SettingsSection>
-        ))
+            </SettingsSection>
+          ) : (
+            visibleGroups.map(({ project, threads: projectThreads }, index) => {
+              const groupKey = `${project.environmentId}:${project.id}`;
+              const isOpen = normalizedQuery ? true : (groupOpenState[groupKey] ?? true);
+              return (
+                <Collapsible
+                  key={groupKey}
+                  open={isOpen}
+                  onOpenChange={(open) =>
+                    setGroupOpenState((state) => ({ ...state, [groupKey]: open }))
+                  }
+                >
+                  <SettingsSection
+                    id={index === 0 ? searchableSetting("archive").id : undefined}
+                    title={project.name}
+                    icon={
+                      <ProjectFavicon
+                        environmentId={project.environmentId}
+                        cwd={project.cwd}
+                        projectName={project.name}
+                        faviconPath={project.faviconPath}
+                        projectIcon={project.projectIcon}
+                      />
+                    }
+                    headerAction={
+                      <CollapsibleTrigger
+                        render={
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 gap-1.5 px-2 text-muted-foreground"
+                          />
+                        }
+                      >
+                        <span className="text-xs tabular-nums">
+                          {projectThreads.length}{" "}
+                          {projectThreads.length === 1 ? "thread" : "threads"}
+                        </span>
+                        <ChevronDownIcon
+                          className={cn("size-3.5 transition-transform", !isOpen && "-rotate-90")}
+                        />
+                      </CollapsibleTrigger>
+                    }
+                  >
+                    <CollapsiblePanel>
+                      {projectThreads.map((thread) => (
+                        <SettingsRow
+                          key={thread.id}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            void (async () => {
+                              const result = await settlePromise(() =>
+                                handleArchivedThreadContextMenu(
+                                  scopeThreadRef(thread.environmentId, thread.id),
+                                  {
+                                    x: event.clientX,
+                                    y: event.clientY,
+                                  },
+                                ),
+                              );
+                              if (result._tag === "Failure") {
+                                const error = squashAtomCommandFailure(result);
+                                toastManager.add(
+                                  stackedThreadToast({
+                                    type: "error",
+                                    title: "Archived thread action failed",
+                                    description:
+                                      error instanceof Error ? error.message : "An error occurred.",
+                                  }),
+                                );
+                              }
+                            })();
+                          }}
+                          title={thread.title}
+                          description={
+                            <>
+                              Archived{" "}
+                              {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
+                              {" \u00b7 Created "}
+                              {formatRelativeTimeLabel(thread.createdAt)}
+                            </>
+                          }
+                          control={
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="xs"
+                              className="shrink-0"
+                              onClick={() => {
+                                void (async () => {
+                                  const result = await unarchiveThread(
+                                    scopeThreadRef(thread.environmentId, thread.id),
+                                  );
+                                  if (result._tag === "Success") {
+                                    refreshArchivedThreads();
+                                    return;
+                                  }
+                                  if (!isAtomCommandInterrupted(result)) {
+                                    const error = squashAtomCommandFailure(result);
+                                    toastManager.add(
+                                      stackedThreadToast({
+                                        type: "error",
+                                        title: "Failed to unarchive thread",
+                                        description:
+                                          error instanceof Error
+                                            ? error.message
+                                            : "An error occurred.",
+                                      }),
+                                    );
+                                  }
+                                })();
+                              }}
+                            >
+                              <ArchiveX className="size-3.5" />
+                              <span>Unarchive</span>
+                            </Button>
+                          }
+                        />
+                      ))}
+                    </CollapsiblePanel>
+                  </SettingsSection>
+                </Collapsible>
+              );
+            })
+          )}
+        </>
       )}
     </SettingsPageContainer>
   );
