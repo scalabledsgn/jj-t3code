@@ -2523,17 +2523,24 @@ export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
   return resolveWebAssetBrandForChannel(resolveDesktopUpdateChannel(version));
 }
 
+// Fork patch: the macOS app ships the SCALABLE Code mark instead of the T3
+// glyph. Kept out of BRAND_ASSET_PATHS on purpose — export-brand-icons writes
+// to those paths from the Icon Composer projects, so overriding there would let
+// a regen clobber the fork asset. Linux/Windows stay upstream; we never build
+// those targets.
+const SCALABLE_MAC_ICON_PNG = "assets/scalable/scalable-macos-1024.png";
+
 export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
   if (resolveDesktopUpdateChannel(version) === "nightly") {
     return {
-      macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
+      macIconPng: SCALABLE_MAC_ICON_PNG,
       linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
       windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
     };
   }
 
   return {
-    macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
+    macIconPng: SCALABLE_MAC_ICON_PNG,
     linuxIconPng: BRAND_ASSET_PATHS.productionLinuxIconPng,
     windowsIconIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
   };
